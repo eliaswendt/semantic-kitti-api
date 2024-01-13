@@ -215,53 +215,28 @@ if __name__ == '__main__':
     print("Processing {} ".format(folder), end="", flush=True)
 
     for i, f in enumerate(scan_files[:1]):
+      print(f'processing file "{f}"')
       # read scan and labels, get pose
       scan_filename = os.path.join(input_folder, "velodyne", f)
-      scan = np.fromfile(scan_filename, dtype=np.float32)
-
-      scan = scan.reshape((-1, 4))
+      scans = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
 
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
-      labels = np.fromfile(label_filename, dtype=np.uint32)
-      labels = labels.reshape((-1))
+      labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      # convert points to homogenous coordinates (x, y, z, 1)
-      points = np.ones((scan.shape))
-      points[:, 0:3] = scan[:, 0:3]
-      remissions = scan[:, 3]
-
-      bb_points, bb_labels = generate_bounding_boxes(points, labels)
+      bb_scans, bb_labels = generate_bounding_boxes(points=scans, labels=labels)
       
-      # add bounding-box points and labels to the original arrays
-      points = np.concatenate((points, bb_points))
+      # add bounding-box points and labels to the existing arrays
+      scans = np.concatenate((scans, bb_scans))
       labels = np.concatenate((labels, bb_labels))
 
-    #   concated_points.tofile(os.path.join(velodyne_folder, f))
-    #   concated_labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
+      scans.tofile(os.path.join(velodyne_folder, f))
+      labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
 
 
 
     # history = deque()
 
     # progress = 10
-
-    # print("Processing {} ".format(folder), end="", flush=True)
-
-    # for i, f in enumerate(scan_files[:20]): # TODO reset slice
-    #   # read scan and labels, get pose
-    #   scan_filename = os.path.join(input_folder, "velodyne", f)
-    #   scan = np.fromfile(scan_filename, dtype=np.float32)
-
-    #   scan = scan.reshape((-1, 4))
-
-    #   label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
-    #   labels = np.fromfile(label_filename, dtype=np.uint32)
-    #   labels = labels.reshape((-1))
-
-    #   # convert points to homogenous coordinates (x, y, z, 1)
-    #   points = np.ones((scan.shape))
-    #   points[:, 0:3] = scan[:, 0:3]
-    #   remissions = scan[:, 3]
 
     #   pose = poses[i]
 
