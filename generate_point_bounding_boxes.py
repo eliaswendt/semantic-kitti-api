@@ -66,7 +66,28 @@ def parse_poses(filename, calibration):
   return poses
 
 
-def generate_bounding_boxes(points, labels):
+def filter_label_ids(points, labels, filtered_label_ids=[]):
+
+  label_ids = labels & 0xFFFF   # lower half
+
+  filtered_points = []
+  filtered_labels = []
+
+  filter_count = 0
+
+  for i in range(len(points)):
+    if label_ids[i] in filtered_label_ids:
+      filter_count += 1
+    else:
+      filtered_points.append(points[i])
+      filtered_labels.append(labels[i])
+
+  print(f'filtered scans/labels: {filter_count}')
+
+  return np.array(filtered_points, dtype=np.float32), np.array(filtered_labels, dtype=np.uint32)
+
+
+def generate_bounding_boxes(scans, labels):
 
   instance_ids = labels >> 16      # upper half
   label_ids = labels & 0xFFFF   # lower half
@@ -74,28 +95,28 @@ def generate_bounding_boxes(points, labels):
   # collect instances in this dict
   # key: label, value: [np.array[coordinates]]
   # example {42: ('person', [239.34, 172.3, -12, 1])}
-  points_grouped_by_label = defaultdict(list)
+  scans_grouped_by_instance = defaultdict(list)
 
-  # group points with the same labels
-  # we use the entire label (instance_id + label_id) as key
-  for i in range(len(points)):
-    if label_ids[i] != 0: # skip unlabeled
-      points_grouped_by_label[labels[i]].append(points[i])
+  # group scans with the same label (instance id + semantic id)
+  for scan, label in zip(scans, labels):
+    scans_grouped_by_instance[label].append(scan)
 
-  
-  bb_points = np.zeros((len(points_grouped_by_label) * 2, 4))
-  bb_labels = np.zeros((len(points_grouped_by_label) * 2,))
-
+  bb_scans = []
+  bb_labels = []
 
   # we will later use these extreme coordinates to compose the instance's bounding box
-  i = 0
-  for points in points_grouped_by_label.values():
+  for label, grouped_scans in scans_grouped_by_instance.items():
+
+    if len(grouped_scans) < 2:
+      # ignoring instances with only one point
+      continue
+
     highest_x, highest_y, highest_z = float("-inf"), float("-inf"), float("-inf")
     lowest_x, lowest_y, lowest_z = float("inf"), float("inf"), float("inf")
 
     # iterate all points of instance and filter
     # for only these with highest x-, y-, and z-coordinates
-    for x, y, z, _ in points:
+    for x, y, z, _ in grouped_scans:
       if x > highest_x:
         highest_x = x
       if x < lowest_x:
@@ -112,14 +133,12 @@ def generate_bounding_boxes(points, labels):
         lowest_z = z
 
     # create and insert points that span the instance's bounding box
-    bb_points[i] = np.array([highest_x, highest_y, highest_z, 1.])
-    bb_labels[i] = np.array([2]) # unused label id
-    bb_points[i+1] = np.array([lowest_x, lowest_y, lowest_z, 1.], dtype=np.float32)
-    bb_labels[i+1] = np.array([2]) # unused label id
+    bb_scans.append([highest_x, highest_y, highest_z, 99.]) # set max remission
+    bb_scans.append([lowest_x, lowest_y, lowest_z, 99.]) # set max remission
+    bb_labels.append(label)
+    bb_labels.append(label)
   
-    i += 2
-
-  return bb_points, bb_labels
+  return np.array(bb_scans, dtype=np.float32), np.array(bb_labels, dtype=np.uint32)
 
 
 if __name__ == '__main__':
@@ -211,11 +230,9 @@ if __name__ == '__main__':
     calibration = parse_calibration(os.path.join(input_folder, "calib.txt"))
     poses = parse_poses(os.path.join(input_folder, "poses.txt"), calibration)
 
+    for i, f in enumerate(scan_files[:25]):
+      print(f'Processing {folder}/{f}')
 
-    print("Processing {} ".format(folder), end="", flush=True)
-
-    for i, f in enumerate(scan_files[:1]):
-      print(f'processing file "{f}"')
       # read scan and labels, get pose
       scan_filename = os.path.join(input_folder, "velodyne", f)
       scans = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
@@ -223,64 +240,17 @@ if __name__ == '__main__':
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      bb_scans, bb_labels = generate_bounding_boxes(points=scans, labels=labels)
+      filtered = filter_label_ids(scans, labels, filtered_label_ids=[0])
+      bb_scans, bb_labels = generate_bounding_boxes(*filtered)
       
       # add bounding-box points and labels to the existing arrays
-      scans = np.concatenate((scans, bb_scans))
-      labels = np.concatenate((labels, bb_labels))
+      scans_with_bb = np.concatenate((scans, bb_scans))
+      labels_with_bb = np.concatenate((labels, bb_labels))
 
-      scans.tofile(os.path.join(velodyne_folder, f))
-      labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
+      print(f'{scans.shape[0]}|{labels.shape[0]}')
 
-
-
-    # history = deque()
-
-    # progress = 10
-
-    #   pose = poses[i]
-
-    #   # prepare single numpy array for all points that can be written at once.
-    #   num_concat_points = points.shape[0]
-    #   num_concat_points += sum([past["points"].shape[0] for past in history])
-    #   concated_points = np.zeros((num_concat_points * 4), dtype = np.float32)
-    #   concated_labels = np.zeros((num_concat_points), dtype = np.uint32)
-
-    #   start = 0
-    #   concated_points[4 * start:4 * (start + points.shape[0])] = scan.reshape((-1))
-    #   concated_labels[start:start + points.shape[0]] = labels
-    #   start += points.shape[0]
-
-    #   for past in history:
-    #     diff = np.matmul(inv(pose), past["pose"])
-    #     tpoints = np.matmul(diff, past["points"].T).T
-    #     tpoints[:, 3] = past["remissions"]
-    #     tpoints = tpoints.reshape((-1))
-
-    #     concated_points[4 * start:4 * (start + past["points"].shape[0])] = tpoints
-    #     concated_labels[start:start + past["labels"].shape[0]] = past["labels"]
-    #     start += past["points"].shape[0]
-
-
-    #   # write scan and labels in one pass.
-    #   concated_points.tofile(os.path.join(velodyne_folder, f))
-    #   concated_labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
-
-    #   # append current data to history queue.
-    #   history.appendleft({
-    #       "points": points,
-    #       "labels": labels,
-    #       "remissions": remissions,
-    #       "pose": pose.copy()
-    #   })
-
-    #   if len(history) >= FLAGS.sequence_length:
-    #     history.pop()
-
-    #   if 100.0 * i / len(scan_files) >= progress:
-    #     print(".", end="", flush=True)
-    #     progress = progress + 10
-    # print("finished.")
+      bb_scans.tofile(os.path.join(velodyne_folder, f))
+      bb_labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
 
 
   print("execution time: {}".format(time.time() - start_time))
