@@ -8,3 +8,6 @@
 *.cxx
 RangeNet.py
 
+venv/
+dataset/
+output/
