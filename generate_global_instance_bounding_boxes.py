@@ -35,7 +35,7 @@ def parse_calibration(filename):
 
   return calib
 
-
+# cf https://github.com/PRBonn/semantic-kitti-api/issues/78
 def parse_poses(filename, calibration):
   """ read poses file with per-scan poses from given filename
 
@@ -60,17 +60,17 @@ def parse_poses(filename, calibration):
     pose[2, 0:4] = values[8:12]
     pose[3, 3] = 1.0
 
-    translated_pose = np.matmul(Tr_inv, np.matmul(pose, Tr))
-    poses.append(translated_pose)
+    poses.append(np.matmul(Tr_inv, np.matmul(pose, Tr))) 
 
   return poses
 
 def translate_scan_to_pose(base_pose, current_pose, scan):
 
-  pose_transformation = np.matmul(inv(current_pose), base_pose)
+  # transform from current_pose to base_pose
+  current_to_base = np.matmul(inv(base_pose), current_pose)
 
   # apply pose transformation to scan
-  translated_scan = np.matmul(pose_transformation, scan.T).T
+  translated_scan = np.matmul(current_to_base, scan.T).T
 
   return translated_scan.astype(np.float32)
 
@@ -238,7 +238,7 @@ if __name__ == '__main__':
     calibration = parse_calibration(os.path.join(input_folder, "calib.txt"))
     poses = parse_poses(os.path.join(input_folder, "poses.txt"), calibration)
 
-    for i, f in enumerate(scan_files[:100]):
+    for i, f in enumerate(scan_files[:1000]):
       print(f'Processing {folder}/{f}')
 
       # read scan and labels, get pose
