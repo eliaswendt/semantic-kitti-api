@@ -65,6 +65,15 @@ def parse_poses(filename, calibration):
 
   return poses
 
+def translate_scan_to_pose(base_pose, current_pose, scan):
+
+  pose_transformation = np.matmul(inv(current_pose), base_pose)
+
+  # apply pose transformation to scan
+  translated_scan = np.matmul(pose_transformation, scan.T).T
+
+  return translated_scan.astype(np.float32)
+
 
 def filter_label_ids(points, labels, filtered_label_ids=[]):
 
@@ -206,7 +215,7 @@ if __name__ == '__main__':
     if os.path.exists(output_folder) or os.path.exists(
             velodyne_folder) or os.path.exists(labels_folder):
       print("Output folder '{}' already exists!".format(output_folder))
-      answer = input("Overwrite? [y/N] ")
+      answer = 'y' #input("Overwrite? [y/N] ") # TODO: change back
       if answer != "y":
         print("Aborted.")
         exit(1)
@@ -226,11 +235,10 @@ if __name__ == '__main__':
         if f.endswith(".bin")
     ]
 
-
     calibration = parse_calibration(os.path.join(input_folder, "calib.txt"))
     poses = parse_poses(os.path.join(input_folder, "poses.txt"), calibration)
 
-    for i, f in enumerate(scan_files[:25]):
+    for i, f in enumerate(scan_files[:100]):
       print(f'Processing {folder}/{f}')
 
       # read scan and labels, get pose
@@ -240,17 +248,19 @@ if __name__ == '__main__':
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      filtered = filter_label_ids(scans, labels, filtered_label_ids=[0])
-      bb_scans, bb_labels = generate_bounding_boxes(*filtered)
+      # filtered = filter_label_ids(scans, labels, filtered_label_ids=[0])
+      # bb_scans, bb_labels = generate_bounding_boxes(*filtered)
       
-      # add bounding-box points and labels to the existing arrays
-      scans_with_bb = np.concatenate((scans, bb_scans))
-      labels_with_bb = np.concatenate((labels, bb_labels))
+      # # add bounding-box points and labels to the existing arrays
+      # scans = np.concatenate((scans, bb_scans))
+      # labels = np.concatenate((labels, bb_labels))
+
+      scans = translate_scan_to_pose(poses[0], poses[i], scans)
 
       print(f'{scans.shape[0]}|{labels.shape[0]}')
 
-      bb_scans.tofile(os.path.join(velodyne_folder, f))
-      bb_labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
+      scans.tofile(os.path.join(velodyne_folder, f))
+      labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
 
 
   print("execution time: {}".format(time.time() - start_time))
