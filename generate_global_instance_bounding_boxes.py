@@ -64,15 +64,19 @@ def parse_poses(filename, calibration):
 
   return poses
 
-def translate_scan_to_pose(base_pose, current_pose, scan):
-
+def translate_scan_to_pose(base_pose_inv, current_pose, scan):
   # transform from current_pose to base_pose
-  current_to_base = np.matmul(inv(base_pose), current_pose)
+  current_to_base = np.matmul(base_pose_inv, current_pose)
 
-  # apply pose transformation to scan
-  translated_scan = np.matmul(current_to_base, scan.T).T
+  points = np.ones((scan.shape[0], 4))
+  points[:, 0:3] = scan[:, 0:3]
+  remissions = scan[:, 3]
 
-  return translated_scan.astype(np.float32)
+  # apply pose transformation to points
+  points = np.matmul(current_to_base, points.T).T
+  points[:, 3] = remissions # re-add remissions
+
+  return points.astype(np.float32)
 
 
 def filter_label_ids(points, labels, filtered_label_ids=[]):
@@ -156,14 +160,6 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser("./generate_sequential.py")
 
   parser.add_argument(
-      '--datacfg', '-dc',
-      type=str,
-      required=False,
-      default="config/semantic-kitti.yaml",
-      help='Dataset config file. Defaults to %(default)s',
-  )
-
-  parser.add_argument(
       '--dataset',
       '-d',
       type=str,
@@ -179,26 +175,14 @@ if __name__ == '__main__':
       help='output folder for generated sequence scans.',
   )
 
-  parser.add_argument(
-      '--sequence_length',
-      '-s',
-      type=int,
-      required=True,
-      help='length of sequence, i.e., how many scans are concatenated.',
-  )
-
   FLAGS, unparsed = parser.parse_known_args()
 
   # print summary of what we will do
   print("*" * 80)
-  print(" datacfg folder: ", FLAGS.datacfg)
   print(" dataset folder: ", FLAGS.dataset)
   print("  output folder: ", FLAGS.output)
-  print("sequence length: ", FLAGS.sequence_length)
   print("*" * 80)
 
-  print("Opening data config file %s" % FLAGS.datacfg)
-  DATA = yaml.safe_load(open(FLAGS.datacfg, 'r'))
 
   sequences_dir = os.path.join(FLAGS.dataset, "sequences")
   sequence_folders = [
@@ -237,13 +221,14 @@ if __name__ == '__main__':
 
     calibration = parse_calibration(os.path.join(input_folder, "calib.txt"))
     poses = parse_poses(os.path.join(input_folder, "poses.txt"), calibration)
+    base_pose_inv = inv(poses[0])
 
-    for i, f in enumerate(scan_files[:1000]):
+    for i, f in enumerate(scan_files[:100]):
       print(f'Processing {folder}/{f}')
 
       # read scan and labels, get pose
       scan_filename = os.path.join(input_folder, "velodyne", f)
-      scans = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
+      scan = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
 
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
@@ -255,11 +240,11 @@ if __name__ == '__main__':
       # scans = np.concatenate((scans, bb_scans))
       # labels = np.concatenate((labels, bb_labels))
 
-      scans = translate_scan_to_pose(poses[0], poses[i], scans)
+      scan = translate_scan_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[i], scan=scan)
 
-      print(f'{scans.shape[0]}|{labels.shape[0]}')
+      print(f'{scan.shape[0]}|{labels.shape[0]}')
 
-      scans.tofile(os.path.join(velodyne_folder, f))
+      scan.tofile(os.path.join(velodyne_folder, f))
       labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
 
 
