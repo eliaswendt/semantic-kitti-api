@@ -3,10 +3,17 @@ import os
 import shutil
 import time
 import numpy as np
+np.seterr(all='raise') # required for catching np warnings
+
 from collections import defaultdict
 from numpy.linalg import inv
+from tqdm import tqdm
 
-import yaml
+import matplotlib.pyplot as plt
+
+from mpl_toolkits.mplot3d import Axes3D
+import open3d as o3d
+from sklearn.cluster import DBSCAN
 
 def parse_calibration(filename):
   """ read calibration file with given filename
@@ -34,6 +41,7 @@ def parse_calibration(filename):
   calib_file.close()
 
   return calib
+
 
 # cf https://github.com/PRBonn/semantic-kitti-api/issues/78
 def parse_poses(filename, calibration):
@@ -64,100 +72,187 @@ def parse_poses(filename, calibration):
 
   return poses
 
-def translate_scan_to_pose(base_pose_inv, current_pose, scan):
+
+def translate_points_to_pose(base_pose_inv, current_pose, points_original):
   # transform from current_pose to base_pose
   current_to_base = np.matmul(base_pose_inv, current_pose)
 
-  points = np.ones((scan.shape[0], 4))
-  points[:, 0:3] = scan[:, 0:3]
-  remissions = scan[:, 3]
+  points_translated = np.ones((points_original.shape[0], 4), dtype=np.float32)
+  points_translated[:, 0:3] = points_original[:, 0:3]
+  remissions = points_original[:, 3]
 
   # apply pose transformation to points
-  points = np.matmul(current_to_base, points.T).T
-  points[:, 3] = remissions # re-add remissions
+  points_translated = np.matmul(current_to_base, points_translated.T).T
+  points_translated[:, 3] = remissions # re-add remissions
 
-  return points.astype(np.float32)
-
-
-def filter_label_ids(points, labels, filtered_label_ids=[]):
-
-  label_ids = labels & 0xFFFF   # lower half
-
-  filtered_points = []
-  filtered_labels = []
-
-  filter_count = 0
-
-  for i in range(len(points)):
-    if label_ids[i] in filtered_label_ids:
-      filter_count += 1
-    else:
-      filtered_points.append(points[i])
-      filtered_labels.append(labels[i])
-
-  print(f'filtered scans/labels: {filter_count}')
-
-  return np.array(filtered_points, dtype=np.float32), np.array(filtered_labels, dtype=np.uint32)
+  return points_translated.astype(np.float32)
 
 
-def generate_bounding_boxes(scans, labels):
+def plot_points_3d(points):
+  # in case scan.shape is (,4)
+  points = points.reshape((-1, 4))
 
-  instance_ids = labels >> 16      # upper half
-  label_ids = labels & 0xFFFF   # lower half
+  fig = plt.figure()
+  ax = fig.add_subplot(projection='3d')
+  ax.scatter(points[:,0], points[:,1], points[:,2])
 
+  ax.set_xlabel('x')
+  ax.set_ylabel('y')
+  ax.set_zlabel('z')
+
+  # same scale for all axis
+  ax.set_aspect('equal', adjustable='box')
+
+  plt.show()
+
+
+def cluster_points(points):
+
+  # grouped_points contains all points with the same label (labeled by the authors)
+  # however, they did not differentiate between instances
+  # we therefore cluster these points with a distance of 1m and conclude each cluster to be an instance
+
+  # https://stackoverflow.com/questions/56062673/clustering-the-3d-points-when-given-the-x-y-z-coordinates-using-dbscan-algorithm
+  model = DBSCAN(eps=1, min_samples=2) # cluster points in a range of 1m, require two points to consider point as a cluster core
+  model.fit_predict(points)
+  pred = model.fit_predict(points)
+
+  n_discovered_clusters = len(set(model.labels_))
+
+  if n_discovered_clusters >= 2:
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(points[:,0], points[:,1], points[:,2], c=model.labels_)
+
+    ax.set_xlabel('x')
+    ax.set_ylabel('y')
+    ax.set_zlabel('z')
+
+    # same scale for all axis
+    ax.set_aspect('equal', adjustable='box')
+    ax.view_init(azim=200)
+
+    plt.show()
+
+  print("number of cluster found: {}".format(n_discovered_clusters))
+  print('cluster for each point: ', model.labels_)
+
+
+def filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_ids_to_select=set() ):
+
+  label_ids = labels & 0xFFFF # lower half
+  instance_ids = labels >> 16 # upper half
+
+  # grouped_points[<label_id>][<instance_id>] = [<point0>, <point1>, ...]
+  grouped_points = defaultdict(lambda: defaultdict(list))
+
+  for point, label_id, instance_id in zip(points, label_ids, instance_ids):
+
+    if label_id in label_ids_to_select:
+      grouped_points[label_id][instance_id].append(point)
+
+  # print(f'selected scans/labels: {len(selected_scans)}')
+
+  return grouped_points
+
+
+def group_points_by_label_and_instance(points, labels):
   # collect instances in this dict
   # key: label, value: [np.array[coordinates]]
   # example {42: ('person', [239.34, 172.3, -12, 1])}
-  scans_grouped_by_instance = defaultdict(list)
+  points_grouped_by_label = defaultdict(list)
 
   # group scans with the same label (instance id + semantic id)
-  for scan, label in zip(scans, labels):
-    scans_grouped_by_instance[label].append(scan)
+  for point, label in zip(points, labels):
+    points_grouped_by_label[label].append(point)
 
-  bb_scans = []
-  bb_labels = []
+  return [ # as list with (points, labels) tuples
+    (np.array(points, dtype=np.float32), np.array(label))
+    for label, points in points_grouped_by_label.items()
+  ]
 
-  # we will later use these extreme coordinates to compose the instance's bounding box
-  for label, grouped_scans in scans_grouped_by_instance.items():
 
-    if len(grouped_scans) < 2:
-      # ignoring instances with only one point
-      continue
+def object_movement_history(points, label):
 
-    highest_x, highest_y, highest_z = float("-inf"), float("-inf"), float("-inf")
-    lowest_x, lowest_y, lowest_z = float("inf"), float("inf"), float("inf")
+  points_grouped_by_label = defaultdict(list)
 
-    # iterate all points of instance and filter
-    # for only these with highest x-, y-, and z-coordinates
-    for x, y, z, _ in grouped_scans:
-      if x > highest_x:
-        highest_x = x
-      if x < lowest_x:
-        lowest_x = x
+  for point, label in zip(points, label):
+    points_grouped_by_label[label].append(point)
 
-      if y > highest_y:
-        highest_y = y
-      if y < lowest_y:
-        lowest_y = y
-      
-      if z > highest_z:
-        highest_z = z
-      if z < lowest_z:
-        lowest_z = z
+  point_stats_by_label = defaultdict(list)
 
-    # create and insert points that span the instance's bounding box
-    bb_scans.append([highest_x, highest_y, highest_z, 99.]) # set max remission
-    bb_scans.append([lowest_x, lowest_y, lowest_z, 99.]) # set max remission
-    bb_labels.append(label)
-    bb_labels.append(label)
+  for label, points in points_grouped_by_label.items():
+    point_bounding_box_lowest, point_bounding_box_highest, point_center = generate_bounding_box_and_center_points(points)
+    point_stats_by_label[label] = {
+      'point_bounding_box_lowest': point_bounding_box_lowest,
+      'point_bounding_box_highest': point_bounding_box_highest,
+      'point_center': point_center
+    }
+
+
+
+def generate_bounding_box_and_center_points(points):
+
+  highest_x, highest_y, highest_z = float("-inf"), float("-inf"), float("-inf")
+  lowest_x, lowest_y, lowest_z = float("inf"), float("inf"), float("inf")
+
+  x_sum = 0
+  y_sum = 0
+  z_sum = 0
+
+  # for only these with highest x-, y-, and z-coordinates
+  for x, y, z, _ in points:
+
+    x_sum += x
+    y_sum += y
+    z_sum += z
+
+    if x > highest_x:
+      highest_x = x
+    if x < lowest_x: # not elif for the case len(points) == 1
+      lowest_x = x
+
+    if y > highest_y:
+      highest_y = y
+    if y < lowest_y: # not elif for the case len(points) == 1
+      lowest_y = y
+    
+    if z > highest_z:
+      highest_z = z
+    if z < lowest_z: # not elif for the case len(points) == 1
+      lowest_z = z
+
+    # set lowest and highest point that span the bounding-box
+    point_bounding_box_lowest = np.array([
+      lowest_x,
+      lowest_y,
+      lowest_z,
+      99
+    ], dtype=np.float32)
+
+    point_bounding_box_highest = np.array([
+      highest_x,
+      highest_y,
+      highest_z,
+      99
+    ], dtype=np.float32)
+
+    # calculate center-point by averaging each coordinate dimension
+    point_center = np.array([
+      x_sum / len(points),
+      y_sum / len(points),
+      z_sum / len(points),
+      99
+    ], dtype=np.float32)
   
-  return np.array(bb_scans, dtype=np.float32), np.array(bb_labels, dtype=np.uint32)
+  return point_bounding_box_lowest, point_bounding_box_highest, point_center
 
 
 if __name__ == '__main__':
   start_time = time.time()
 
-  parser = argparse.ArgumentParser("./generate_sequential.py")
+  parser = argparse.ArgumentParser("./generate_global_instance_bounding_boxes.py")
 
   parser.add_argument(
       '--dataset',
@@ -190,7 +285,10 @@ if __name__ == '__main__':
       if os.path.isdir(os.path.join(sequences_dir, f))
   ]
 
+  # iterate all sequences eg. 00, 01, etc.
   for folder in sequence_folders:
+    # print('TODO: skipping first sequence folder') # TODO!!!
+
     input_folder = os.path.join(sequences_dir, folder)
     output_folder = os.path.join(FLAGS.output, "sequences", folder)
     velodyne_folder = os.path.join(output_folder, "velodyne")
@@ -223,29 +321,57 @@ if __name__ == '__main__':
     poses = parse_poses(os.path.join(input_folder, "poses.txt"), calibration)
     base_pose_inv = inv(poses[0])
 
-    for i, f in enumerate(scan_files[:100]):
-      print(f'Processing {folder}/{f}')
+    # stores the inter-frame movement history of each object (center-points)
+    # dict[<label_id>][<instance-id>] = [<center-point0>, <center-point1>, ...]
+    point_center_history_by_label_id_and_sequence_id = defaultdict(lambda: defaultdict(list))    
 
+    # iterate frames/scans
+    for frame_id, file in enumerate(pbar := tqdm(scan_files)):
+      pbar.set_description(f"Processing {folder}/{file}")
+      
       # read scan and labels, get pose
-      scan_filename = os.path.join(input_folder, "velodyne", f)
-      scan = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
+      scan_filename = os.path.join(input_folder, "velodyne", file)
+      points = np.fromfile(scan_filename, dtype=np.float32).reshape((-1, 4))
 
-      label_filename = os.path.join(input_folder, "labels", os.path.splitext(f)[0] + ".label")
+      label_filename = os.path.join(input_folder, "labels", os.path.splitext(file)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      # filtered = filter_label_ids(scans, labels, filtered_label_ids=[0])
-      # bb_scans, bb_labels = generate_bounding_boxes(*filtered)
-      
+      # points = translate_points_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[frame_id], points_original=points)
+
+      points_grouped_by_label_id_and_instance_id = filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_ids_to_select={30})
+      for label_id, points_grouped_by_instance_id in points_grouped_by_label_id_and_instance_id.items():
+        for instance_id, points in points_grouped_by_instance_id.items():
+
+          point_bb_low, point_bb_high, point_center = generate_bounding_box_and_center_points(points)
+
+          span_bb = point_bb_high - point_bb_low
+          span_volume_bb = np.prod(span_bb[:3])
+
+          point_center_history_by_label_id_and_sequence_id[label_id][instance_id].append(point_center)
+
+          # if span_volume_bb >= 0.1:
+          #   print(f'span_volume_bb={span_volume_bb}')
+          #   print(f'instance_id={instance_id}')
+          #   points = np.array(points, dtype=np.float32)
+          #   plot_points_3d(points)
+
+        # print(f'grouped_points={grouped_points[:, 0]}, grouped_points_translated={grouped_points_translated[:, 0]}')
+
+      # scan_bb, labels_bb, scan_cp, label_cp = generate_bounding_boxes_and_center_points(scans, labels)
       # # add bounding-box points and labels to the existing arrays
       # scans = np.concatenate((scans, bb_scans))
       # labels = np.concatenate((labels, bb_labels))
 
-      scan = translate_scan_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[i], scan=scan)
+      # points.tofile(os.path.join(velodyne_folder, file))
+      # labels.tofile(os.path.join(labels_folder, os.path.splitext(file)[0] + ".label")) 
 
-      print(f'{scan.shape[0]}|{labels.shape[0]}')
-
-      scan.tofile(os.path.join(velodyne_folder, f))
-      labels.tofile(os.path.join(labels_folder, os.path.splitext(f)[0] + ".label")) 
+    point_center_output_folder = os.path.join(output_folder, 'point_center_history')
+    os.makedirs(point_center_output_folder)
+    # calculate movement stats per instance
+    for label_id, points_center_by_instance_id in point_center_history_by_label_id_and_sequence_id.items():
+      for instance_id, points_center in points_center_by_instance_id.items():
+        points_center = np.array(points_center)
+        points_center.tofile(os.path.join(point_center_output_folder, f'label-id{label_id:03d}_instance-id{instance_id:03d}.np'))
 
 
   print("execution time: {}".format(time.time() - start_time))
