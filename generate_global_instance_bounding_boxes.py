@@ -227,23 +227,20 @@ def generate_bounding_box_and_center_points(points):
     point_bounding_box_lowest = np.array([
       lowest_x,
       lowest_y,
-      lowest_z,
-      99
+      lowest_z
     ], dtype=np.float32)
 
     point_bounding_box_highest = np.array([
       highest_x,
       highest_y,
-      highest_z,
-      99
+      highest_z
     ], dtype=np.float32)
 
     # calculate center-point by averaging each coordinate dimension
     point_center = np.array([
       x_sum / len(points),
       y_sum / len(points),
-      z_sum / len(points),
-      99
+      z_sum / len(points)
     ], dtype=np.float32)
   
   return point_bounding_box_lowest, point_bounding_box_highest, point_center
@@ -336,7 +333,7 @@ if __name__ == '__main__':
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(file)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      # points = translate_points_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[frame_id], points_original=points)
+      points = translate_points_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[frame_id], points_original=points)
 
       points_grouped_by_label_id_and_instance_id = filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_ids_to_select={30})
       for label_id, points_grouped_by_instance_id in points_grouped_by_label_id_and_instance_id.items():
@@ -365,13 +362,11 @@ if __name__ == '__main__':
       # points.tofile(os.path.join(velodyne_folder, file))
       # labels.tofile(os.path.join(labels_folder, os.path.splitext(file)[0] + ".label")) 
 
-    point_center_output_folder = os.path.join(output_folder, 'point_center_history')
-    os.makedirs(point_center_output_folder)
     # calculate movement stats per instance
     for label_id, points_center_by_instance_id in point_center_history_by_label_id_and_sequence_id.items():
       for instance_id, points_center in points_center_by_instance_id.items():
         points_center = np.array(points_center)
-        points_center.tofile(os.path.join(point_center_output_folder, f'label-id{label_id:03d}_instance-id{instance_id:03d}.np'))
+        points_center.tofile(f'object_traces/sequence={folder}_label={label_id:03d}_instance={instance_id:03d}.np')
 
 
   print("execution time: {}".format(time.time() - start_time))
