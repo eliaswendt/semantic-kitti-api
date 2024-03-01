@@ -43,6 +43,126 @@ def parse_calibration(filename):
   return calib
 
 
+def transform_points_from_velo_to_cam_2_coordinate_system(points):
+  """
+  In order to transform a homogeneous point X = [x y z 1]' from the velodyne
+  coordinate system to a homogeneous point Y = [u v 1]' on image plane of
+  camera xx, the following transformation has to be applied:
+
+  Y = P_rect_xx * R_rect_00 * (R|T)_velo_to_cam * X
+  """
+
+  # calib_velo_to_cam.txt and calib_cam_to_cam downloaded from: https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26/calib_cam_to_cam.txt and https://s3.eu-central-1.amazonaws.com/avg-kitti/raw_data/2011_09_26/calib_velo_to_cam.txt
+  # however: not sure if these values apply to our dataset (semantic kitti aka. kitti odometry)
+
+  # compose of R and T from calib_velo_to_cam.txt
+  RT_velo_to_cam = np.array([
+    [7.533745e-03, -9.999714e-01, -6.166020e-04, -4.069766e-03],
+    [1.480249e-02,  7.280733e-04, -9.998902e-01, -7.631618e-02],
+    [9.998621e-01,  7.523790e-03,  1.480755e-02, -2.717806e-01],
+    [0.,            0,             0,             1.          ]
+  ], dtype=np.float32)
+  # RT_velo_to_cam = cam_calibration['TR'].reshape((3,4))
+  # RT_velo_to_cam = np.zeros((4, 4), dtype=np.float32)
+  # RT_velo_to_cam[0, 0:4] = cam_calibration['TR'][0:4]
+  # RT_velo_to_cam[1, 0:4] = cam_calibration['TR'][4:8]
+  # RT_velo_to_cam[2, 0:4] = cam_calibration['TR'][8:12]
+  # RT_velo_to_cam[3, 3] = 1.0
+
+
+  # R_rect_00 from calib_cam_to_cam.txt: 9.999239e-01 9.837760e-03 -7.445048e-03 -9.869795e-03 9.999421e-01 -4.278459e-03 7.402527e-03 4.351614e-03 9.999631e-01
+  R_rect_00 = np.array([
+    [ 9.999239e-01, 9.837760e-03, -7.445048e-03, 0.],
+    [-9.869795e-03, 9.999421e-01, -4.278459e-03, 0.],
+    [ 7.402527e-03, 4.351614e-03,  9.999631e-01, 0.],
+    [ 0.,           0.,             0.,          1.]
+  ], dtype=np.float32)
+  # R_rect_00 = cam_calibration['R_rect_00'].reshape((3,3))
+  # R_rect_00 = np.zeros((4, 4), dtype=np.float32)
+  # R_rect_00[0, 0:3] = cam_calibration['R_rect_00'][0:3]
+  # R_rect_00[1, 0:3] = cam_calibration['R_rect_00'][3:6]
+  # R_rect_00[2, 0:3] = cam_calibration['R_rect_00'][6:9]
+  # R_rect_00[3, 3] = 1.0
+
+
+
+  # P_rect_02 from calib_cam_to_cam.txt: 4.485728e+01 0.000000e+00 7.215377e+02 1.728540e+02 2.163791e-01 0.000000e+00 0.000000e+00 1.000000e+00 2.745884e-03
+  P_rect_02 = np.array([
+    [7.215377e+02, 0.000000e+00, 6.095593e+02, 4.485728e+01],
+    [0.000000e+00, 7.215377e+02, 1.728540e+02, 2.163791e-01],
+    [0.000000e+00, 0.000000e+00, 1.000000e+00, 2.745884e-03],
+  ], dtype=np.float32)
+  # P_rect_02 = cam_calibration['P_rect_02'].reshape((3, 4))
+  # P_rect_02 = np.zeros((4,4), dtype=np.float32)
+  # P_rect_02[0, 0:4] = cam_calibration['P_rect_02'][0:4]
+  # P_rect_02[1, 0:4] = cam_calibration['P_rect_02'][4:8]
+  # P_rect_02[2, 0:4] = cam_calibration['P_rect_02'][8:12]
+  # P_rect_02[3, 3] = 1.0
+
+
+
+  # Tr from calib.txt: 4.276802385584e-04 -9.999672484946e-01 -8.084491683471e-03 -1.198459927713e-02 -7.210626507497e-03 8.081198471645e-03 -9.999413164504e-01 -5.403984729748e-02 9.999738645903e-01 4.859485810390e-04 -7.206933692422e-03 -2.921968648686e-01
+  Tr = np.array([
+    [4.276802385584e-04, -9.999672484946e-01, -8.084491683471e-03, -1.198459927713e-02],
+    [-7.210626507497e-03, 8.081198471645e-03, -9.999413164504e-01, -5.403984729748e-02],
+    [9.999738645903e-01, 4.859485810390e-04, -7.206933692422e-03, -2.921968648686e-01],
+    [0., 0., 0., 1.]
+  ], dtype=np.float32)
+
+  # P0 from calib.txt: 7.070912000000e+02 0.000000000000e+00 6.018873000000e+02 0.000000000000e+00 0.000000000000e+00 7.070912000000e+02 1.831104000000e+02 0.000000000000e+00 0.000000000000e+00 0.000000000000e+00 1.000000000000e+00 0.000000000000e+00
+  P0 = np.array([
+    [7.070912000000e+02, 0.000000000000e+00, 6.018873000000e+02, 0.000000000000e+00],
+    [0.000000000000e+00, 7.070912000000e+02, 1.831104000000e+02, 0.000000000000e+00],
+    [0.000000000000e+00, 0.000000000000e+00, 1.000000000000e+00, 0.000000000000e+00],
+    [0., 0., 0., 1.]
+  ], dtype=np.float32)
+
+  # P2 from calib.txt: 7.070912000000e+02 0.000000000000e+00 6.018873000000e+02 4.688783000000e+01 0.000000000000e+00 7.070912000000e+02 1.831104000000e+02 1.178601000000e-01 0.000000000000e+00 0.000000000000e+00 1.000000000000e+00 6.203223000000e-03
+  P2 = np.array([
+    [7.070912000000e+02, 0.000000000000e+00, 6.018873000000e+02, 4.688783000000e+01],
+    [0.000000000000e+00, 7.070912000000e+02, 1.831104000000e+02, 1.178601000000e-01],
+    [0.000000000000e+00, 0.000000000000e+00, 1.000000000000e+00, 6.203223000000e-03],
+  ], dtype=np.float32)
+
+  # save remissions before point transformation
+  remissions = points[:, 3]
+
+  # set neutral element
+  points[:, 3] = 1.
+  
+  # transpose for batched matmul
+  points_translated = points.T
+
+  # transformations as described in https://github.com/bostondiditeam/kitti/blob/master/resources/devkit_object/readme.txt#L87
+  # points_translated = np.matmul(RT_velo_to_cam, points_translated)
+  # points_translated = np.matmul(R_rect_00, points_translated)
+  # points_translated = np.matmul(P2, points_translated)
+
+  # transformations as described in https://github.com/yfcube/kitti-devkit-odom/blob/master/readme.txt#L91
+  # points_translated = np.matmul(Tr, points_translated)
+  # points_translated = np.matmul(P0, points_translated)
+  # points_translated = np.matmul(P2, points_translated)
+
+
+  # rot_mat = np.matmul(P2, Tr)
+  # points_translated = np.matmul(rot_mat, points_translated)
+
+  # revert transpose
+  points_translated = points_translated.T
+
+  # additional transformations from https://github.com/valeoai/xmuda/blob/master/xmuda/data/semantic_kitti/preprocess.py#L108
+  points_translated = points_translated[:, :2] / np.expand_dims(points_translated[:, 2], axis=1)  # scale 2D points
+  points_translated = np.fliplr(points_translated)
+
+  # re-built 4d points-array to stay compatible with visualizer.py
+  # only necessary if points transformation yields non-4d point coordinates
+  points_translated_4d = np.zeros((points_translated.shape[0], 4), dtype=np.float32)
+  points_translated_4d[:, 0:2] = points_translated[:, 0:2]
+  points_translated_4d[:, 3] = remissions # re-set remissions
+
+  return points_translated_4d
+
+
 # cf https://github.com/PRBonn/semantic-kitti-api/issues/78
 def parse_poses(filename, calibration):
   """ read poses file with per-scan poses from given filename
@@ -73,7 +193,7 @@ def parse_poses(filename, calibration):
   return poses
 
 
-def translate_points_to_pose(base_pose_inv, current_pose, points_original):
+def transform_points_from_velo_to_pose_coordinate_system(base_pose_inv, current_pose, points_original):
   # transform from current_pose to base_pose
   current_to_base = np.matmul(base_pose_inv, current_pose)
 
@@ -106,11 +226,26 @@ def plot_points_3d(points):
   plt.show()
 
 
-def cluster_points(points):
+def plot_points_2d(points):
+  # in case scan.shape is (,2)
+  points = points.reshape((-1, 2))
 
-  # grouped_points contains all points with the same label (labeled by the authors)
-  # however, they did not differentiate between instances
-  # we therefore cluster these points with a distance of 1m and conclude each cluster to be an instance
+  fig = plt.figure()
+  ax = fig.add_subplot()
+  ax.scatter(points[:,0], points[:,1])
+
+  ax.set_xlabel('x')
+  ax.set_ylabel('y')
+
+  # same scale for all axis
+  ax.set_aspect('equal', adjustable='box')
+
+  plt.show()
+
+
+def cluster_points(points):
+  # currently unused, as dataset we work with is already labeled with instance-ids
+  # we cluster points with a distance of 1m and conclude each cluster to be an instance
 
   # https://stackoverflow.com/questions/56062673/clustering-the-3d-points-when-given-the-x-y-z-coordinates-using-dbscan-algorithm
   model = DBSCAN(eps=1, min_samples=2) # cluster points in a range of 1m, require two points to consider point as a cluster core
@@ -139,7 +274,9 @@ def cluster_points(points):
   print('cluster for each point: ', model.labels_)
 
 
-def filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_ids_to_select=set() ):
+def filter_by_label_id_then_group_by_label_id_and_instance_id(points, labels, label_ids_to_select=set()):
+
+  # label-ids are listed here: https://github.com/PRBonn/semantic-kitti-api/blob/master/config/semantic-kitti.yaml#L2
 
   label_ids = labels & 0xFFFF # lower half
   instance_ids = labels >> 16 # upper half
@@ -157,49 +294,11 @@ def filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_id
   return grouped_points
 
 
-def group_points_by_label_and_instance(points, labels):
-  # collect instances in this dict
-  # key: label, value: [np.array[coordinates]]
-  # example {42: ('person', [239.34, 172.3, -12, 1])}
-  points_grouped_by_label = defaultdict(list)
-
-  # group scans with the same label (instance id + semantic id)
-  for point, label in zip(points, labels):
-    points_grouped_by_label[label].append(point)
-
-  return [ # as list with (points, labels) tuples
-    (np.array(points, dtype=np.float32), np.array(label))
-    for label, points in points_grouped_by_label.items()
-  ]
-
-
-def object_movement_history(points, label):
-
-  points_grouped_by_label = defaultdict(list)
-
-  for point, label in zip(points, label):
-    points_grouped_by_label[label].append(point)
-
-  point_stats_by_label = defaultdict(list)
-
-  for label, points in points_grouped_by_label.items():
-    point_bounding_box_lowest, point_bounding_box_highest, point_center = generate_bounding_box_and_center_points(points)
-    point_stats_by_label[label] = {
-      'point_bounding_box_lowest': point_bounding_box_lowest,
-      'point_bounding_box_highest': point_bounding_box_highest,
-      'point_center': point_center
-    }
-
-
-
-def generate_bounding_box_and_center_points(points):
+def generate_bbox_and_center_points(points):
 
   highest_x, highest_y, highest_z = float("-inf"), float("-inf"), float("-inf")
   lowest_x, lowest_y, lowest_z = float("inf"), float("inf"), float("inf")
-
-  x_sum = 0
-  y_sum = 0
-  z_sum = 0
+  x_sum, y_sum, z_sum = 0, 0, 0
 
   # for only these with highest x-, y-, and z-coordinates
   for x, y, z, _ in points:
@@ -210,17 +309,17 @@ def generate_bounding_box_and_center_points(points):
 
     if x > highest_x:
       highest_x = x
-    if x < lowest_x: # not elif for the case len(points) == 1
+    if x < lowest_x: # not elif in case len(points) == 1
       lowest_x = x
 
     if y > highest_y:
       highest_y = y
-    if y < lowest_y: # not elif for the case len(points) == 1
+    if y < lowest_y: # not elif in case len(points) == 1
       lowest_y = y
     
     if z > highest_z:
       highest_z = z
-    if z < lowest_z: # not elif for the case len(points) == 1
+    if z < lowest_z: # not elif in case len(points) == 1
       lowest_z = z
 
     # set lowest and highest point that span the bounding-box
@@ -275,6 +374,7 @@ if __name__ == '__main__':
   print("  output folder: ", FLAGS.output)
   print("*" * 80)
 
+  #cam_calibration = parse_cam_calibration(os.path.join(FLAGS.dataset, "sequences/calib_cam.txt"))
 
   sequences_dir = os.path.join(FLAGS.dataset, "sequences")
   sequence_folders = [
@@ -284,7 +384,6 @@ if __name__ == '__main__':
 
   # iterate all sequences eg. 00, 01, etc.
   for folder in sequence_folders:
-    # print('TODO: skipping first sequence folder') # TODO!!!
 
     input_folder = os.path.join(sequences_dir, folder)
     output_folder = os.path.join(FLAGS.output, "sequences", folder)
@@ -333,16 +432,47 @@ if __name__ == '__main__':
       label_filename = os.path.join(input_folder, "labels", os.path.splitext(file)[0] + ".label")
       labels = np.fromfile(label_filename, dtype=np.uint32).reshape((-1))
 
-      points = translate_points_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[frame_id], points_original=points)
+      img_filename = os.path.join(input_folder, "image_2", os.path.splitext(file)[0] + ".png")
+      image = plt.imread(img_filename)
 
-      points_grouped_by_label_id_and_instance_id = filter_by_label_id_and_groupd_by_label_and_instance(points, labels, label_ids_to_select={30})
+      points_in_camera_coordinates = transform_points_from_velo_to_cam_2_coordinate_system(points)
+
+      # plot_points_2d(points_in_camera_coordinates[:, :2])
+
+      # filter transformed points array to fit inside the camera image plane
+      # filtered_points_in_camera_coordinates = []
+      # filtered_labels = []
+      # max_x = image.shape[0]
+      # max_y = image.shape[1]
+      # for point, label in zip(points_in_camera_coordinates, labels):
+      #   y, x = int(point[0]), int(point[1])
+
+      #   if x >= 0. and x < max_x and y >= 0. and y < max_y:
+      #     image[x][y][:] = [1., 0., 0.]
+      #     filtered_points_in_camera_coordinates.append(point)
+      #     filtered_labels.append(label)
+
+      # #plot_points_2d(points_in_camera_coordinates[:, :2])
+      # plt.imshow(image)
+      # plt.show()
+
+      # points = translate_points_to_pose(base_pose_inv=base_pose_inv, current_pose=poses[frame_id], points_original=points)
+      # continue
+
+      points_grouped_by_label_id_and_instance_id = filter_by_label_id_then_group_by_label_id_and_instance_id(
+        points, 
+        labels, 
+        label_ids_to_select={30, 31, 253, 254} # label-ids are listed here: https://github.com/PRBonn/semantic-kitti-api/blob/master/config/semantic-kitti.yaml#L2
+      )
+
       for label_id, points_grouped_by_instance_id in points_grouped_by_label_id_and_instance_id.items():
         for instance_id, points in points_grouped_by_instance_id.items():
 
-          point_bb_low, point_bb_high, point_center = generate_bounding_box_and_center_points(points)
+          point_bbox_low, point_bbox_high, point_center = generate_bbox_and_center_points(points)
 
-          span_bb = point_bb_high - point_bb_low
-          span_volume_bb = np.prod(span_bb[:3])
+          # calculate bbox volume
+          bbox_span = point_bbox_high - point_bbox_low
+          bbox_volume = np.prod(bbox_span[:3])
 
           point_center_history_by_label_id_and_sequence_id[label_id][instance_id].append(point_center)
 
@@ -354,19 +484,15 @@ if __name__ == '__main__':
 
         # print(f'grouped_points={grouped_points[:, 0]}, grouped_points_translated={grouped_points_translated[:, 0]}')
 
-      # scan_bb, labels_bb, scan_cp, label_cp = generate_bounding_boxes_and_center_points(scans, labels)
-      # # add bounding-box points and labels to the existing arrays
-      # scans = np.concatenate((scans, bb_scans))
-      # labels = np.concatenate((labels, bb_labels))
-
+      # TODO: enable to save transformed points
       # points.tofile(os.path.join(velodyne_folder, file))
       # labels.tofile(os.path.join(labels_folder, os.path.splitext(file)[0] + ".label")) 
 
-    # calculate movement stats per instance
-    for label_id, points_center_by_instance_id in point_center_history_by_label_id_and_sequence_id.items():
-      for instance_id, points_center in points_center_by_instance_id.items():
-        points_center = np.array(points_center)
-        points_center.tofile(f'object_traces/sequence={folder}_label={label_id:03d}_instance={instance_id:03d}.np')
+    # save instance traces to file to get analyzed `object_trace_analysis.ipynb`
+    # for label_id, points_center_by_instance_id in point_center_history_by_label_id_and_sequence_id.items():
+    #   for instance_id, points_center in points_center_by_instance_id.items():
+    #     points_center = np.array(points_center)
+    #     points_center.tofile(f'object_traces/sequence={folder}_label={label_id:03d}_instance={instance_id:03d}.np')
 
 
   print("execution time: {}".format(time.time() - start_time))
